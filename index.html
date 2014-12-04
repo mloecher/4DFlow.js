@@ -1,0 +1,411 @@
+<!doctype html>
+<html>
+
+<head>
+    <title>4DFlow.js</title>
+    <link href='http://fonts.googleapis.com/css?family=Roboto:400,700' rel='stylesheet' type='text/css'>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+    <meta name="mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+
+    <style>
+        html,
+        body {
+            height: 100%;
+        }
+        body {
+            font-family: 'Roboto', sansserif;
+            font-size: 15px;
+            color: #FFF;
+            margin: 0;
+            -webkit-user-select: none;
+            -moz-user-select: none;
+            -ms-user-select: none;
+            user-select: none;
+            -webkit-tap-highlight-color: rgba(0, 0, 0, 0);
+        }
+        h1 {
+            font-size: 40px;
+            font-weight: 700;
+            text-align: center
+        }
+        h2 {
+            font-size: 20px;
+            font-weight: 700;
+        }
+        .sidebar {
+            background-color: #673AB7;
+            border-right: 1px solid #9575CD;
+            padding: 0px 10px;
+            float: left;
+            width: 350px;
+            /*margin-right: -350px;*/
+            
+            height: 100%;
+            overflow-y: auto;
+        }
+        .main {
+            background-color: #111111;
+            margin-left: 371px;
+            height: 100%;
+            overflow: hidden;
+        }
+        .Absolute-Center {
+            text-align: center;
+            position: relative;
+            top: 50%;
+            transform: translateY(-50%);
+        }
+        progress {
+            background-color: #f3f3f3;
+            border: 0;
+            height: 18px;
+            width: 300px;
+            border-radius: 9px;
+        }
+    </style>
+
+</head>
+
+<body>
+
+
+    <div class="sidebar">
+        <h1>4DFlow.js</h1> A 4D Flow MRI data viewer built mostly with WebGL and three.js
+        <h2>Controls</h2>
+        <b>rotation</b> = click and drag
+        <br>
+        <b>zoom</b> = mouse wheel
+        <br>
+        <b>pan</b> = mouse3 click and drag
+        <br> or shift + click and drag
+        <br>
+        <b>rotate on cam axis</b> = ctrl + click and drag
+        <br>
+        <b>Note:</b> Control Panel doesnt work right now
+        <h2>About</h2>
+        <p>The isosurface is generated from a 3D volume that is sent to the client using a marching cubes algorithm on a hardcoded threshold. </p>
+        <p>Streamlines are precomputed from a displacement corrected velocity field. </p>
+        <p>The mouse control mostly rotates the object instead of the camera, despite what all the other three.js libraries do. </p>
+        <h2>TODO</h2>
+        <ul>
+            <li><s>Change camera controls to rotating the object instead of camera</s>
+            </li>
+            <li><s>Fix lighting source tracking with camera (though the previous change might fix that)</s>
+            </li>
+            <li><s>Handle window resizing</s> (why so slow?)</li>
+            <li><s>Pan speed needs to be tied to the zoom level</s> </li>
+            <li><s>Add loading progress bar</s>
+            </li>
+            <li><s>Display precomputed streamlines</s>
+            </li>
+            <li><s>Add control panel</s>
+            </li>
+            <li>Isosurface slider</li>
+            <li>Opacity slider</li>
+            <li>Streamline toggle</li>
+            <li>Animated streamlines</li>
+            <li>Add backend</li>
+        </ul>
+
+    </div>
+
+    <div class="main" id="main">
+        <div class="Absolute-Center" id="loading">
+            Downloading 3D angiogram to memory: <span id="load0">0</span>/<span id="load1">0</span> MB
+            <br>
+            <progress id="load_bar" value="10" max="100"></progress>
+            <br>
+        </div>
+
+    </div>
+
+    <script src="js/three.min.js"></script>
+    <script src="js/stats.min.js"></script>
+    <script src="js/dat.gui.min.js"></script>
+    <script src="js/marchingcubes.js"></script>
+    <script src="js/ObjectControls.js"></script>
+
+    <script>
+        var CD, lines;
+        var finishedLoad = false
+        var finishedInit = false
+
+        function updateProgress(oEvent) {
+            if (oEvent.lengthComputable) {
+                var percentComplete = oEvent.loaded / oEvent.total;
+                percentComplete = Math.round(percentComplete * 100);
+
+                document.getElementById("load_bar").value = percentComplete;
+                document.getElementById("load0").innerHTML = (oEvent.loaded / Math.pow(2, 20)).toFixed(1);
+                document.getElementById("load1").innerHTML = (oEvent.total / Math.pow(2, 20)).toFixed(1);
+            } else {
+                // Unable to compute progress information since the total size is unknown
+            }
+        }
+
+        function loadlines() {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', 'data/lines.bin', true);
+            console.log("loadlines")
+            xhr.responseType = 'arraybuffer';
+
+            xhr.onload = function(evt) {
+                if (xhr.response) {
+                    lines = new Float32Array(xhr.response);
+                    loadCD();
+                }
+            }
+            xhr.send(null);
+        }
+
+        function loadCD() {
+            var xhr = new XMLHttpRequest();
+            xhr.open('GET', 'data/CD.bin', true);
+            xhr.addEventListener("progress", updateProgress, false);
+            xhr.responseType = 'arraybuffer';
+
+            xhr.onload = function(evt) {
+                if (xhr.response) {
+                    CD = new Float32Array(xhr.response);
+                    finishedLoad = true
+                    init();
+                    rm_element = document.getElementById("loading");
+                    rm_element.parentNode.removeChild(rm_element);
+                    render();
+                }
+            }
+            xhr.send(null);
+        }
+
+        params = {
+            cd_thresh: 0.12,
+            cd_opacity: 1.0,
+            stream_toggle: true,
+        };
+
+        function addDatGui() {
+            var gui = new dat.GUI({
+                autoPlace: false
+            });
+
+            gui.add(params, 'cd_thresh').min(0.01).max(.5).step(0.01).name('CD Thresh');
+            gui.add(params, 'cd_opacity').min(0.1).max(1.0).step(0.05).name('CD Opacity');
+            gui.add(params, 'stream_toggle').name('Streamlines');
+
+            gui.domElement.style.position = 'absolute';
+            gui.domElement.style.top = '0px';
+            gui.domElement.style.right = '0px';
+            gui.domElement.style.backgroundColor = "transparent";
+            // gui.domElement.style.zIndex = -1;
+
+            document.getElementById('main').appendChild(gui.domElement);
+        }
+
+
+        addDatGui();
+        loadlines();
+
+        var stats, scene, renderer, composer;
+        var camera, cameraControl, controls;
+        var geometry, surfacemesh, wiremesh, mesh;
+        var distX, distY, distZ;
+
+        var parent_object = new THREE.Object3D();
+
+        function init() {
+
+
+            var divwidth, divheight
+
+
+
+            container = document.getElementById('main');
+            document.body.appendChild(container);
+
+
+            console.log(container.offsetWidth)
+            console.log(container.offsetHeight)
+            renderer = new THREE.WebGLRenderer({
+                antialias: true
+            });
+            renderer.setSize(container.offsetWidth, container.offsetHeight);
+
+            stats = new Stats();
+            stats.domElement.style.position = 'absolute';
+            stats.domElement.style.bottom = '0px';
+            stats.domElement.style.right = '0px';
+            container.appendChild(stats.domElement);
+
+            container.appendChild(renderer.domElement);
+            renderer.setClearColor(0x111111, 1);
+
+            mesh = marchingCubes([204, 196, 261], getCDval)
+
+            function getCDval(x, y, z) {
+                i = x + y * 204 + z * 204 * 196
+                return (0.12 - CD[i]);
+
+            }
+
+            console.log(mesh)
+
+            scene = new THREE.Scene();
+
+            var light = new THREE.AmbientLight(0x555555);
+            scene.add(light);
+            // var light2 = new THREE.DirectionalLight( 0xffffff, 0.7 );
+            // light2.position.set( Math.random(), Math.random(), Math.random() ).normalize();
+            // scene.add( light2 );
+
+            var directionalLight = new THREE.DirectionalLight(0xffffff, 0.7);
+            directionalLight.position.x = 100;
+            directionalLight.position.y = -50;
+            directionalLight.position.z = -50;
+            directionalLight.name = 'directionalLight';
+            scene.add(directionalLight);
+
+
+
+            geometry = new THREE.Geometry();
+
+            for (var i = 0; i < mesh.positions.length; ++i) {
+                var v = mesh.positions[i];
+                geometry.vertices.push(new THREE.Vector3(v[0], v[1], v[2]));
+            }
+
+            for (var i = 0; i < mesh.cells.length; ++i) {
+                var f = mesh.cells[i];
+                if (f.length === 3) {
+                    geometry.faces.push(new THREE.Face3(f[0], f[1], f[2]));
+                } else if (f.length === 4) {
+                    geometry.faces.push(new THREE.Face4(f[0], f[1], f[2], f[3]));
+                } else {
+                    //Polygon needs to be subdivided
+                }
+            }
+
+            geometry.computeBoundingBox();
+            geometry.computeBoundingSphere();
+            geometry.mergeVertices();
+            geometry.computeFaceNormals();
+            geometry.computeVertexNormals();
+
+
+            console.log(geometry.boundingBox.max.x)
+            distX = (geometry.boundingBox.max.x - geometry.boundingBox.min.x) / 2;
+            distY = (geometry.boundingBox.max.y - geometry.boundingBox.min.y) / 2;
+            distZ = (geometry.boundingBox.max.z - geometry.boundingBox.min.z) / 2;
+            geometry.applyMatrix(new THREE.Matrix4().makeTranslation(-distX, -distY, -distZ));
+
+            var material = new THREE.MeshLambertMaterial({
+
+                // shanding: THREE.FlatShading,
+                side: THREE.DoubleSide,
+                // side: THREE.BackSide,
+                // specular: 0xF5F5F5,
+                color: 0x999999,
+                ambient: 0x999999,
+                // shininess: 500,
+                transparent: true,
+                opacity: 0.4,
+                // alphaTest: 0.05,
+                // depthTest: false,
+                depthWrite: false,
+                // vertexColors: THREE.VertexColors
+
+            });
+
+            var material2 = new THREE.MeshLambertMaterial({
+
+                // shanding: THREE.FlatShading,
+                // side: THREE.DoubleSide,
+                // side: THREE.BackSide,
+                // specular: 0xF5F5F5,
+                color: 0x999999,
+                ambient: 0x999999,
+                // shininess: 500,
+                transparent: true,
+                opacity: 0.4,
+                // alphaTest: 0.05,
+                // depthTest: false,
+                depthWrite: false,
+                // vertexColors: THREE.VertexColors
+
+            });
+
+            var surfacemesh = new THREE.Mesh(geometry, material);
+            surfacemesh.name = "angio_back"
+            parent_object.add(surfacemesh);
+            // var surfacemesh = new THREE.Mesh(geometry, material2);
+            // surfacemesh.name = "angio_front"
+            // parent_object.add(surfacemesh);
+
+
+            var parent_lines = new THREE.Object3D();
+
+            var material = new THREE.LineBasicMaterial({
+                color: 0x00ff00,
+                transparent: true,
+                opacity: .5,
+            });
+            var ind;
+            for (var j = 0; j < 1000; ++j) {
+                var geometry = new THREE.Geometry();
+                for (var i = 0; i < 300; ++i) {
+                    ind = j * 900 + i * 3;
+                    geometry.vertices.push(new THREE.Vector3(lines[ind] - distX - 1.0, lines[ind + 1] - distY - 1.0, lines[ind + 2] - distZ - 1.0));
+                }
+
+                var line = new THREE.Line(geometry, material);
+                parent_lines.add(line);
+            }
+
+
+            parent_object.add(parent_lines);
+            scene.add(parent_object);
+
+            camera = new THREE.PerspectiveCamera(30, container.offsetWidth / container.offsetHeight, .1, 10000);
+
+            // cameraControls = new THREE.TrackballControls(camera)
+            // cameraControls.staticMoving = true;
+
+            camera.position.set(600, 0, 0);
+            camera.lookAt(scene.position)
+            camera.rotation.x = -90 * Math.PI / 180;
+
+            controls = new ObjectControls(parent_object, camera, container)
+                // scene.add(camera);
+                // camera.rotation.x = -1;
+                // console.log(camera)
+
+            window.addEventListener('resize', onWindowResize, false);
+
+            function onWindowResize() {
+
+                camera.aspect = container.offsetWidth / container.offsetHeight;
+                camera.updateProjectionMatrix();
+
+                renderer.setSize(container.offsetWidth, container.offsetHeight);
+
+            }
+            console.log(parent_object)
+
+
+
+        }
+
+        var render = function() {
+            requestAnimationFrame(render);
+            controls.update();
+
+
+            renderer.render(scene, camera);
+            stats.update();
+        };
+        
+    </script>
+
+</body>
+
+</html>
