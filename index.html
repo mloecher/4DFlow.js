@@ -146,7 +146,8 @@
 
         function loadlines() {
             var xhr = new XMLHttpRequest();
-            xhr.open('GET', 'data/lines.bin', true);
+            // xhr.open('GET', 'data/lines.bin', true);
+            xhr.open('GET', 'data3/lines.bin', true);
             console.log("loadlines")
             xhr.responseType = 'arraybuffer';
 
@@ -161,7 +162,8 @@
 
         function loadCD() {
             var xhr = new XMLHttpRequest();
-            xhr.open('GET', 'data/CD.bin', true);
+            // xhr.open('GET', 'data/CD.bin', true);
+            xhr.open('GET', 'data3/CD.bin', true);
             xhr.addEventListener("progress", updateProgress, false);
             xhr.responseType = 'arraybuffer';
 
@@ -240,11 +242,12 @@
             container.appendChild(renderer.domElement);
             renderer.setClearColor(0x111111, 1);
 
-            mesh = marchingCubes([204, 196, 261], getCDval)
+            // mesh = marchingCubes([176, 233, 197], getCDval)
+            mesh = marchingCubes([229, 203, 243], getCDval)
 
             function getCDval(x, y, z) {
-                i = x + y * 204 + z * 204 * 196
-                return (0.12 - CD[i]);
+                i = x + y * 229 + z * 229 * 203
+                return (0.21 - CD[i]);
 
             }
 
