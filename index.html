@@ -377,7 +377,7 @@
             camera.lookAt(scene.position)
             camera.rotation.x = -90 * Math.PI / 180;
 
-            controls = new ObjectControls(parent_object, camera, container)
+            controls = new ObjectControls(parent_object, camera, renderer.domElement)
                 // scene.add(camera);
                 // camera.rotation.x = -1;
                 // console.log(camera)
